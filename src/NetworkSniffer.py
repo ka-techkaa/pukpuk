@@ -1,19 +1,42 @@
-from scapy.all import sniff, get_if_list
+from scapy.all import sniff, get_if_list, IP, TCP, UDP
+import time
 
 class NetworkSniffer:
     def __init__(self):
         self.packets = []
         self.is_running = False
-        self.packet_count = 0
+        self.packet_count = 1
         self.oshibka = False
 
     def _process_packet(self, packet):
         if not self.is_running:
             return None
-        
 
-    def start(self, packet_count, interface):
-        if not self.check_interface(interface): 
+        packet_info ={
+            'no': self.packet_count,
+            'source': 'Unknown',
+            'destination': 'Unknown',
+            'protocol': 'Unknown',
+            'length': len(packet),
+            'time': time.strftime("%H:%M:%S", time.localtime())
+        }
+
+        if packet.haslayer(IP):
+            ip = packet[IP]
+            packet_info['source'] = ip.src
+            packet_info['destination'] = ip.dst
+            if packet.haslayer(TCP):
+                packet_info['protocol'] = "TCP"
+                self.packet_count += 1
+                self.packets.append(packet_info)
+            elif packet.haslayer(UDP):
+                packet_info['protocol'] = "UDP"
+                self.packet_count += 1
+                self.packets.append(packet_info)
+
+
+    def start(self, packet_count, interface=None):
+        if not self.check_interface(interface) and interface != None: 
             print(f"\nche ta ne rabotaet, problema tyt {interface}\n")
             return False
         try:
@@ -45,11 +68,8 @@ class NetworkSniffer:
         print("tutu")
 
 if __name__ == "__main__":
-   a = NetworkSniffer()
-   a.start(4, 'llw0')
-   print(get_if_list())
-
-
-   
-    
+    a = NetworkSniffer()
+    a.start(16)
+    print(a.packets)
+       
         
