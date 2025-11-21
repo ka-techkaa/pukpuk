@@ -1,4 +1,4 @@
-from scapy.all import sniff, get_if_list, IP, TCP, UDP
+from scapy.all import sniff, get_if_list, IP, TCP, UDP, AsyncSniffer
 import time
 import threading 
 from collections import defaultdict
@@ -9,9 +9,16 @@ class NetworkSniffer:
         self.is_running = False
         self.packet_count = 1
         self.oshibka = False
-        self.sniffer_thread = None
+        #self.sniffer_thread = None
+        self.async_sniffer = None
+        self._watcher_thread = None
+        
 
         self.protocol_stats = defaultdict(int)
+        
+        self.new_packet_callback = None
+
+        self._lock = threading.Lock()
 
     def set_new_packet_callback(self, callback):
         self.new_packet_callback = callback
@@ -38,15 +45,21 @@ class NetworkSniffer:
                 self.packet_count += 1
                 self.packets.append(packet_info)
                 self.protocol_stats['TCP'] += 1
-                if hasattr(self, 'new_packet_callback'):
-                    self.new_packet_callback(packet_info)
+                if callable(self.new_packet_callback):
+                    try:
+                        self.new_packet_callback(packet_info)
+                    except Exception as e:
+                        print(f"erroooooorrrr: {e}")
             elif packet.haslayer(UDP):
                 packet_info['protocol'] = "UDP"
                 self.packet_count += 1
                 self.packets.append(packet_info)
                 self.protocol_stats['UDP'] += 1
-                if hasattr(self, 'new_packet_callback'):
-                    self.new_packet_callback(packet_info)
+                if callable(self.new_packet_callback):
+                    try:
+                        self.new_packet_callback(packet_info)
+                    except Exception as e:
+                        print(f"erroooooorrrr: {e}")
 
 
     def start(self, packet_count = None, interface=None):
@@ -58,22 +71,33 @@ class NetworkSniffer:
         try:
             self.is_running = True
 
-            if packet_count != None:
-                 sniff(count = packet_count, 
-                    iface = interface,
-                    prn = self._process_packet)
-            else:
-                self.sniffer_thread = threading.Thread(
-                    target = self._sniff_packets,
-                    args = (interface, self._process_packet),
-                    daemon = True 
-                )
-                self.sniffer_thread.start()
+            self.async_sniffer = AsyncSniffer(
+                iface = interface,
+                prn = self._process_packet,
+                count = packet_count,
+                store = False
+            )
+            self.async_sniffer.start()
+
+
+            # if packet_count != None:
+            #      sniff(count = packet_count, 
+            #         iface = interface,
+            #         prn = self._process_packet)
+            # else:
+            #     self.sniffer_thread = threading.Thread(
+            #         target = self._sniff_packets,
+            #         args = (interface, self._process_packet),
+            #         daemon = True 
+            #     )
+            #     self.sniffer_thread.start()
 
             print("zapusk") 
             return True
         except Exception as e:
+            self.is_running = False
             print(f"hfhfhhf{e}")
+            return False
 
     def check_interface(self, iface):
         if iface in self.get_available_interface():

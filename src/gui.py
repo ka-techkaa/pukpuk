@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 )
 from core.NetworkSniffer import NetworkSniffer
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal, QSortFilterProxyModel
 from PyQt6.QtGui import QColor
 from core.fileOOOOOOOOO import export_packets_to_csv
 import pyqtgraph as pg
@@ -35,7 +35,7 @@ class PacketTable(QAbstractTableModel):
          'source',
          'destination',
          'protokol',
-         'lendht',
+         'length',
          'time'
       ]
 
@@ -64,16 +64,31 @@ class PacketTable(QAbstractTableModel):
 
       if role == Qt.ItemDataRole.DisplayRole:
          packet = self._data[row]
-         keys = list(packet.keys())
-         return str(packet[keys[column]])
+         match column:
+            case 0:
+               return packet.get('no', '')
+            case 1:
+               return str(packet.get('source', ""))
+            case 2:
+               return str(packet.get('destination', ""))
+            case 3:
+               return str(packet.get('protocol', ""))
+            case 4:
+               return packet.get('length', "")
+            case 5:
+               return str(packet.get('time', ""))
+            case _: 
+               return ""
+         #keys = list(packet.keys())
+         #return str(packet[keys[column]])
       
       elif role == Qt.ItemDataRole.BackgroundRole:
          packet = self._data[row]
 
          if packet ['protocol'] == 'TCP':
-            return QColor(235,52,225)
-         elif packet ['protocol'] == 'TCP':
-            return QColor(52,235,95)
+            return QColor(241,156,187)
+         elif packet ['protocol'] == 'UDP':
+            return QColor(251,206,177)
          
       return None
    
@@ -91,6 +106,7 @@ class MainWindow(QMainWindow):
    def __init__(self):
       super().__init__()
       self.sniffer = NetworkSniffer()
+      self.max_packets = None  #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
       self.init_ui()
       self.setup_connections()
 
@@ -108,12 +124,18 @@ class MainWindow(QMainWindow):
       self.interface_combo = QComboBox()
       self.interface_combo.addItems(["Все интерфейсы"] + [iface for iface in self.sniffer.get_available_interface() if iface != 'lo'])
 
-      self.start_btn = QPushButton("запуск")
-      self.stop_btn = QPushButton("стоп")
-      self.stop_btn.setEnabled(False)
-      self.clear_btn = QPushButton("очистить")
-      self.export_btn = QPushButton("csv")
+      self.packet_count_combo = QComboBox()
+      self.packet_count_combo.addItems(["Бесконечно", "10", "50", "100", "500", "1000"]) #====================================================
 
+      self.packet_count_combo.currentTextChanged.connect(self.on_packet_count_changed) #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+      self.start_btn = QPushButton("Старт")
+      self.stop_btn = QPushButton("Стоп")
+      self.stop_btn.setEnabled(False)
+      self.clear_btn = QPushButton("Очистка")
+      self.export_btn = QPushButton("CSV")
+
+      control_layout.addWidget(self.packet_count_combo)
       control_layout.addWidget(self.interface_combo)
       control_layout.addWidget(self.start_btn)
       control_layout.addWidget(self.stop_btn)
@@ -123,8 +145,17 @@ class MainWindow(QMainWindow):
 
       self.packet_table = QTableView()
       self.table_model = PacketTable([])
-      self.packet_table.setModel(self.table_model)
-      self.packet_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+      self.proxy_table_model = QSortFilterProxyModel()
+      self.proxy_table_model.setSourceModel(self.table_model)
+      self.proxy_table_model.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+      self.packet_table.setModel(self.proxy_table_model)
+      self.packet_table.setSortingEnabled(True)
+      header = self.packet_table.horizontalHeader()
+      header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+      header.setStretchLastSection(True)
+
+
 
       self.packet_details = QTextEdit()
       self.packet_details.setReadOnly(True)
@@ -138,7 +169,7 @@ class MainWindow(QMainWindow):
       layout.addWidget(splitter)
 
       self.stats_plot = pg.PlotWidget(title = "Распределение по протоколам")
-      self.stats_plot.setBackground('w')
+      self.stats_plot.setBackground((250,218,221))
       layout.addWidget(self.stats_plot)
 
    def setup_connections(self):
@@ -154,8 +185,20 @@ class MainWindow(QMainWindow):
       self.update_signal.connect(self.add_packet_to_table)
       self.sniffer.set_new_packet_callback(lambda pkt: self.update_signal.emit(pkt))
 
+   def on_packet_count_changed(self, text): #===============================================================
+    if text == "Бесконечно":
+        self.max_packets = None
+    else:
+        try:
+            self.max_packets = int(text)
+        except ValueError:
+            self.max_packets = None
+
    def add_packet_to_table(self, packet_info):
       self.table_model.add_packet(packet_info)
+      if self.max_packets is not None and len(self.table_model._data) >= self.max_packets: #=====================================================
+         self.stop_sniffer()
+        # QMessageBox.information(self, "Захват завершен", f"Захвачено заданное количество пакетов: {self.max_packets}")
         
    def show_packet_details(self, index):
       if not index.isValid():
@@ -169,15 +212,18 @@ class MainWindow(QMainWindow):
       Source: {packet['source']}
       Destination: {packet['destination']}
       Protocol: {packet['protocol']}
-      Lenght: {packet['length']} bytes
+      Length: {packet['length']} bytes
       """
 
       self.packet_details.setText(details)
 
    def start_sniffer(self):
+            
       selected_interface = self.interface_combo.currentText()
       if selected_interface == "Все интерфейсы":
          selected_interface = None
+
+      self.on_packet_count_changed(self.packet_count_combo.currentText()) #====================================================
 
       self.sniffer.start(interface=selected_interface)
       self.start_btn.setEnabled(False)
@@ -206,7 +252,7 @@ class MainWindow(QMainWindow):
       counts = list(stats['protocols'].values())
 
       if counts:
-         bg = pg.BarGraphItem(x=range(len(protocols)), height = counts, width = 0.6, brush = 'b')
+         bg = pg.BarGraphItem(x=range(len(protocols)), height = counts, width = 0.6, brush = (204,204,255))
          self.stats_plot.addItem(bg)
 
          self.stats_plot.getAxis('bottom').setTicks(
@@ -232,7 +278,7 @@ class MainWindow(QMainWindow):
             export_packets_to_csv(self.sniffer.packets, path)
             QMessageBox.information(self, "готова", "экспорт успешно выполнен")
          except Exception as e:
-            QMessageBox.critical(self, "ошибка" , f"не скачалосб{e}")
+            QMessageBox.critical(self, "ошибка" , f"Не скачалось /n{e}")
 
 
 if __name__ == "__main__":
